@@ -1,0 +1,2 @@
+{"scenario_id":"booking_en","success":true,"booking_correct":true,"turns":6,"tool_calls":["lookup_patient","find_availability","book_appointment"],"redundant_questions":0,"failed_tool_calls":0,"latency_ms":{"total":4200,"tool":310,"llm":900,"asr":380,"tts":420}}
+{"scenario_id":"booking_hi","success":true,"booking_correct":true,"turns":7,"tool_calls":["lookup_patient","find_availability","book_appointment"],"redundant_questions":0,"failed_tool_calls":0,"latency_ms":{"total":5100,"tool":340,"llm":1020,"asr":410,"tts":480}}

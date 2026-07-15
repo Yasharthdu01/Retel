@@ -1,0 +1,11 @@
+[
+  {"id":"booking_en","language":"en","intent":"booking","required_tools":["lookup_patient","find_availability","book_appointment"],"max_turns":8},
+  {"id":"booking_hi","language":"hi","intent":"booking","required_tools":["lookup_patient","find_availability","book_appointment"],"max_turns":8},
+  {"id":"booking_mixed","language":"mixed","intent":"booking","required_tools":["lookup_patient","find_availability","book_appointment"],"max_turns":8},
+  {"id":"reschedule","language":"en","intent":"reschedule","required_tools":["lookup_patient","find_availability","reschedule_appointment"],"max_turns":8},
+  {"id":"cancel","language":"hi","intent":"cancel","required_tools":["lookup_patient","cancel_appointment"],"max_turns":6},
+  {"id":"returning_patient","language":"mixed","intent":"booking","required_tools":["lookup_patient","find_availability","book_appointment"],"max_turns":7},
+  {"id":"callback","language":"en","intent":"callback","required_tools":["find_availability","book_appointment"],"max_turns":5},
+  {"id":"dropped_call","language":"hi","intent":"callback","required_tools":["find_availability","book_appointment"],"max_turns":5},
+  {"id":"cross_branch","language":"mixed","intent":"booking","required_tools":["find_availability","book_appointment"],"max_turns":7}
+]
