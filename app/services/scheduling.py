@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.clock import as_utc
 from app.core.config import Settings
 from app.core.errors import Conflict, IdentityRequired, NotFound
 from app.db.base import Appointment, AppointmentStatus
@@ -20,9 +21,10 @@ class SchedulingService:
     async def availability(self, query: AvailabilityQuery):
         now = datetime.now(timezone.utc) + timedelta(minutes=self.settings.booking_buffer_minutes)
         start = max(query.from_time.astimezone(timezone.utc), now)
-        if query.to_time <= start:
+        end = query.to_time.astimezone(timezone.utc)
+        if end <= start:
             return []
-        return await self.repo.available_slots(start, query.to_time, query.doctor_ids,
+        return await self.repo.available_slots(start, end, query.doctor_ids,
                                                query.branch_ids, query.department_id, query.limit)
 
     async def book(self, data: BookingRequest) -> Appointment:
@@ -32,8 +34,11 @@ class SchedulingService:
         if patient.full_name.casefold() != " ".join(data.patient_full_name.split()).casefold():
             raise IdentityRequired("The patient's full name must match before booking")
         existing = await self.repo.pms_log(data.idempotency_key, "book")
-        if existing and existing.response_payload and existing.response_payload.get("appointment_id"):
-            appointment = await self.repo.appointment(uuid.UUID(existing.response_payload["appointment_id"]))
+        # The appointment id is recorded in our own request log, so a retry is recognised even when the
+        # external PMS does not echo the id back in its response.
+        previous_id = (existing.request_payload or {}).get("appointment_id") if existing else None
+        if previous_id:
+            appointment = await self.repo.appointment(uuid.UUID(previous_id))
             if appointment:
                 return appointment
         slot = await self.repo.slot(data.slot_id, lock=True)
@@ -41,7 +46,7 @@ class SchedulingService:
             raise NotFound("Appointment slot not found")
         if slot.is_booked or slot.blocked_reason:
             raise Conflict("That slot is no longer available")
-        if slot.starts_at <= datetime.now(timezone.utc) + timedelta(minutes=self.settings.booking_buffer_minutes):
+        if as_utc(slot.starts_at) <= datetime.now(timezone.utc) + timedelta(minutes=self.settings.booking_buffer_minutes):
             raise Conflict("That slot is inside the booking buffer")
         slot.is_booked = True
         appointment = Appointment(patient_id=patient.id, doctor_id=slot.doctor_id,
@@ -69,7 +74,7 @@ class SchedulingService:
             raise NotFound("New slot not found")
         if new_slot.is_booked or new_slot.blocked_reason:
             raise Conflict("The new slot is no longer available")
-        if new_slot.starts_at <= datetime.now(timezone.utc) + timedelta(minutes=self.settings.booking_buffer_minutes):
+        if as_utc(new_slot.starts_at) <= datetime.now(timezone.utc) + timedelta(minutes=self.settings.booking_buffer_minutes):
             raise Conflict("The new slot is inside the booking buffer")
         new_slot.is_booked = True
         if old_slot:

@@ -23,7 +23,7 @@ class PMSService:
     @retry(retry=retry_if_exception_type((httpx.TransportError, httpx.HTTPStatusError)),
            stop=stop_after_attempt(3), wait=wait_exponential(min=0.2, max=2), reraise=True)
     async def _send(self, operation: str, key: str, payload: dict[str, Any]) -> dict[str, Any]:
-        async with httpx.AsyncClient(base_url=self.settings.pms_base_url, timeout=5) as client:
+        async with httpx.AsyncClient(base_url=self.settings.pms_url, timeout=5) as client:
             response = await client.post(f"/ehr/{operation}", json=payload,
                                          headers={"Idempotency-Key": key})
             response.raise_for_status()

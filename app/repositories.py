@@ -6,8 +6,8 @@ from sqlalchemy import Select, and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.base import (
-    Appointment, AppointmentSlot, AppointmentStatus, AuditLog, Branch, CallSession,
-    CallStatus, ConversationState, Doctor, Patient, PMSLog,
+    Appointment, AppointmentSlot, AuditLog, Branch, CallSession,
+    CallStatus, ConversationState, Department, Doctor, DoctorSchedule, Patient, PMSLog,
 )
 
 
@@ -84,6 +84,30 @@ class ClinicRepository:
 
     async def pms_log(self, key: str, operation: str) -> PMSLog | None:
         return await self.session.scalar(select(PMSLog).where(PMSLog.idempotency_key == key, PMSLog.operation == operation))
+
+    async def patient_by_phone_and_name(self, phone: str, full_name: str) -> Patient | None:
+        return await self.session.scalar(
+            select(Patient).where(Patient.phone == phone, Patient.full_name == full_name).limit(1)
+        )
+
+    async def directory(self) -> dict[str, list[Any]]:
+        """Small reference tables; read in full so tool results can carry human-readable names."""
+        branches = list(await self.session.scalars(
+            select(Branch).where(Branch.active.is_(True)).order_by(Branch.name)))
+        departments = list(await self.session.scalars(select(Department).order_by(Department.name)))
+        doctors = list(await self.session.scalars(
+            select(Doctor).where(Doctor.active.is_(True)).order_by(Doctor.full_name)))
+        schedules = list(await self.session.scalars(
+            select(DoctorSchedule).where(DoctorSchedule.active.is_(True))
+            .order_by(DoctorSchedule.doctor_id, DoctorSchedule.weekday)))
+        return {"branches": branches, "departments": departments, "doctors": doctors,
+                "schedules": schedules}
+
+    async def slots_by_ids(self, slot_ids: list[uuid.UUID]) -> dict[uuid.UUID, AppointmentSlot]:
+        if not slot_ids:
+            return {}
+        result = await self.session.scalars(select(AppointmentSlot).where(AppointmentSlot.id.in_(slot_ids)))
+        return {slot.id: slot for slot in result}
 
     async def audit(self, actor: str, action: str, entity: Any, details: dict[str, Any] | None = None) -> None:
         await self.add(AuditLog(actor=actor, action=action, entity_type=type(entity).__name__,
