@@ -1,8 +1,40 @@
 import os
+import re
 from functools import lru_cache
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def normalize_database_url(value: str) -> str:
+    """Accept the URL exactly as Neon, Railway or Heroku-style hosts print it.
+
+    Those hosts give `postgres://` or `postgresql://` with libpq options such as `sslmode` and
+    `channel_binding`. asyncpg needs the `postgresql+asyncpg://` driver prefix, takes `ssl` instead
+    of `sslmode`, and rejects `channel_binding`, so pasting the host's string unchanged would crash.
+    """
+    value = value.strip()
+    for prefix in ("postgres://", "postgresql://"):
+        if value.startswith(prefix):
+            value = "postgresql+asyncpg://" + value[len(prefix):]
+            break
+    if not value.startswith("postgresql+asyncpg://"):
+        return value
+    # Neon's pooled endpoint (PgBouncer, transaction mode) breaks asyncpg's prepared-statement cache.
+    # The direct endpoint is the same hostname without "-pooler", and this app needs few connections.
+    value = re.sub(r"@(ep-[^.@/]+)-pooler\.", r"@\1.", value, count=1)
+    if "?" not in value:
+        return value
+    base, query = value.split("?", 1)
+    params = []
+    for item in query.split("&"):
+        key, _, val = item.partition("=")
+        if key == "channel_binding":
+            continue
+        if key == "sslmode":
+            key = "ssl"
+        params.append(f"{key}={val}" if _ else key)
+    return f"{base}?{'&'.join(params)}" if params else base
 
 
 class Settings(BaseSettings):
@@ -26,8 +58,9 @@ class Settings(BaseSettings):
     @field_validator("database_url")
     @classmethod
     def async_driver_required(cls, value: str) -> str:
+        value = normalize_database_url(value)
         if not value.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
-            raise ValueError("DATABASE_URL must use asyncpg or aiosqlite")
+            raise ValueError("DATABASE_URL must be a PostgreSQL URL (or sqlite+aiosqlite for tests)")
         return value
 
     @property
