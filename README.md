@@ -64,6 +64,26 @@ docker compose up --build
 
 Migrations and the idempotent seed run before Uvicorn starts. OpenAPI is at `http://localhost:8000/docs`; readiness is `GET /api/v1/health`.
 
+### Simulate a phone call (no Retell account needed)
+
+With the server running, in a second terminal:
+
+```bash
+python -m scripts.simulate_call                          # local server, secret read from .env
+python -m scripts.simulate_call --base https://<host>    # a deployed server
+```
+
+It sends correctly signed Retell requests through a whole call: first contact, a dropped call, a
+callback that resumes it, registration, live availability, booking, read-back, escalation, and ten
+callers racing for one slot. It prints what the voice agent would hear back and exits non-zero if
+anything a real call depends on is broken. With Docker, run it inside the container:
+`docker compose exec api python -m scripts.simulate_call`.
+
+### Talk to the agent for real
+
+Retell must reach your machine over HTTPS. Run `ngrok http 8000`, set `PUBLIC_BASE_URL` to the ngrok
+URL, restart, then follow **Retell setup** below and use Retell's web call button.
+
 To run without Docker:
 
 ```bash
@@ -87,7 +107,7 @@ uvicorn app.main:app --reload
 | `PUBLIC_BASE_URL` | yes | Public HTTPS origin registered in Retell |
 | `CLINIC_TIMEZONE` | no | Default `Asia/Kolkata` |
 | `BOOKING_BUFFER_MINUTES` | no | Prevents last-minute bookings; default 15 |
-| `PMS_BASE_URL` | yes | PMS origin; compose points this at the API's mock EHR |
+| `PMS_BASE_URL` | no | PMS origin. Leave empty to use the built-in mock EHR on the server's own `$PORT` (correct on Railway); set it for a real PMS |
 | `PMS_FAILURE_RATE` | no | Mock-only controlled failure rate, 0–1 |
 | `LOG_LEVEL` | no | Structured JSON log level |
 
@@ -116,11 +136,25 @@ Mock PMS endpoints are `POST /ehr/book`, `/ehr/reschedule`, and `/ehr/cancel`. T
 ## Retell setup and tool flow
 
 1. Create a Retell agent using an OpenAI GPT-4.1-backed Retell LLM.
-2. Copy the prompt and tool definitions returned by `GET /retell/llm-config` into the agent or provision them through Retell's management API.
-3. Register `https://<host>/retell/webhook` for `call_started`, `call_ended`, and optionally `transcript_updated`.
-4. Configure each custom function to call `POST https://<host>/retell/functions` with the standard `{name, call, args}` payload.
-5. Set the designated webhook API key as `RETELL_WEBHOOK_SECRET`.
-6. Enable multilingual language handling, responsive interruptions, and the desired Hindi/English voice in Retell.
+2. Open `GET https://<host>/retell/llm-config`. Paste `general_prompt` and `begin_message` into the agent, and add each entry of `general_tools` as a custom function (name, description, parameters; all of them use the URL `https://<host>/retell/functions`).
+3. Register `https://<host>/retell/webhook` for `call_started` and `call_ended`.
+4. Set the Retell API key that carries the webhook badge as `RETELL_WEBHOOK_SECRET`; it signs both webhooks and custom function calls.
+5. Enable multilingual language handling, responsive interruptions, and the desired Hindi/English voice in Retell.
+
+Voice tools:
+
+| Tool | What the agent gets back |
+|---|---|
+| `get_call_context` | Called first. Today's local date, caller phone, patients on that phone with upcoming appointments, saved progress from a dropped call |
+| `list_clinic_directory` | Branches, departments, doctors, weekly hours, and the ids other tools need |
+| `lookup_patient` | Patients and upcoming appointments for a phone (defaults to the caller) |
+| `register_patient` | Creates a patient on the caller's number; returns the existing one if the name already exists |
+| `find_availability` | Live slots, each with `doctor_name`, `branch_name` and `say_time` to read aloud |
+| `book_appointment` / `reschedule_appointment` / `cancel_appointment` | Confirmed result with names and `say_time`, or an error the agent can explain |
+| `save_progress` | Stores intent and collected fields so a dropped call can resume |
+| `escalate_to_human` | Staff callback task, urgent when `clinical_concern` is true |
+
+The caller's number and the call are identified from the `call` object Retell sends with every function call, so the model never handles internal session ids. Idempotency keys are derived from the Retell call id when the model omits them, which makes Retell's retries safe. Every tool runs in its own transaction; any failure, including a PMS write-back failure, rolls the whole tool back and returns `{"error": {"code", "message"}}` with HTTP 200 so the agent can recover instead of seeing a 500.
 
 Both endpoints verify Retell's current `v=<milliseconds>,d=<digest>` HMAC format against the raw body and reject timestamps outside five minutes. Lifecycle webhooks have a 10-second delivery window and retries, so handlers are idempotent by Retell call ID. See the official [webhook security](https://docs.retellai.com/features/secure-webhook), [webhook events](https://docs.retellai.com/features/webhook-overview), and [custom function contract](https://docs.retellai.com/build/conversation-flow/custom-function).
 
@@ -134,13 +168,13 @@ sequenceDiagram
     participant D as PostgreSQL
     participant P as PMS
     C->>R: English / Hindi / mixed request
-    R->>A: lookup_patient(phone)
-    A->>D: all phone matches + history
-    A-->>R: identities; disambiguation flag
+    R->>A: get_call_context()
+    A->>D: caller's patients, upcoming visits, dropped-call state
+    A-->>R: today, identities, resumable progress
     R->>A: find_availability(criteria)
     A->>D: fresh ordered slot query
-    A-->>R: live slot options
-    R->>A: book_appointment(full name, slot, key)
+    A-->>R: live slots with doctor, branch, say_time
+    R->>A: book_appointment(full name, slot)
     A->>D: lock and revalidate slot
     A->>P: idempotent write-back with retry
     P-->>A: confirmation reference
@@ -153,7 +187,7 @@ sequenceDiagram
 
 The system prompt mirrors the caller's current English, Hindi, or Hinglish without translation tables. It minimizes turns by reusing persisted facts and asking only for missing fields. It requires tools for live data, full name before booking, one final read-back, and explicit disambiguation when a phone number maps to several patients. Clinical advice is prohibited. Human requests and clinical concerns create `follow_up_tasks`; the assistant states that staff will follow up and never invents an immediate transfer.
 
-On a callback within 24 hours, the latest active/disconnected call's intent, collected fields, missing fields, patient association, language, and last message are copied into a new session and linked in `callback_history`. This survives process restarts and does not rely on model memory.
+During a call the agent writes what it has learned with `save_progress`. If the caller hangs up mid-request and calls back within 24 hours, that intent, collected fields, missing fields and patient are copied into the new call, linked in `callback_history`, and returned by `get_call_context`. A request that finished (booked, rescheduled, cancelled or escalated) is never resumed, and a resumed request is handed over only once. This survives process restarts and does not rely on model memory.
 
 ## Testing
 
@@ -164,7 +198,7 @@ pytest -p no:cacheprovider
 
 Tests use SQLite only as an isolated service/API test store. Release validation should additionally run migrations and concurrency tests against PostgreSQL 16 because SQLite does not implement PostgreSQL row locks.
 
-Current automated coverage includes API health/patient creation, patient-name identity, double-book prevention, dropped-call state recovery, and Retell signature/replay protection.
+Current automated coverage includes API health/patient creation, patient-name identity, double-book prevention, dropped-call state recovery, Retell signature/replay protection, and the full voice-tool path through `/retell/functions`: new-caller registration and booking with speakable results, idempotent retries, PMS-failure rollback, invalid arguments returning errors instead of 500s, escalation by Retell call id, single hand-over of resumed calls, and idempotent slot top-up. `scripts/simulate_call.py` repeats the call flow against a running server on PostgreSQL, including a 10-way race for one slot.
 
 ## Evaluation
 
@@ -182,12 +216,14 @@ The critical confirmation path is one database lock/query plus one PMS request. 
 
 ## Railway deployment
 
-1. Create a Railway project and Neon PostgreSQL database.
-2. Deploy this repository; `railway.json` selects the Dockerfile, runs migrations/seed, and configures the health check.
-3. Set every production environment variable, including the public HTTPS URL and webhook key.
-4. Change `PMS_BASE_URL` from the mock endpoint to the clinic's private PMS adapter.
-5. Register Retell webhook/function URLs only after the health check passes.
-6. Run PostgreSQL integration tests, a Retell test call in each language, and the full evaluation cohort before routing the clinic number.
+1. Create a Railway project and Neon PostgreSQL database (`postgresql+asyncpg://` URL).
+2. Set the variables: `DATABASE_URL`, `RETELL_WEBHOOK_SECRET`, `PUBLIC_BASE_URL` (the Railway HTTPS domain). Leave `PMS_BASE_URL` empty while using the mock EHR.
+3. Deploy this repository; `railway.json` selects the Dockerfile, runs migrations and the seed, and configures the health check. Keep one replica for the first deploy.
+4. Wait for `GET /api/v1/health` to report ok, then run `python -m scripts.simulate_call --base https://<host>` from your machine.
+5. Configure Retell (see **Retell setup**) and make web test calls in English, Hindi and Hinglish.
+6. Only then attach a phone number. For a real clinic, point `PMS_BASE_URL` at the clinic's PMS adapter.
+
+Slots are generated for 45 days ahead at every boot and topped up every six hours while the server runs, so the calendar does not run dry.
 
 Use one migration job during multi-replica rollout rather than allowing every replica to migrate concurrently. Restrict `/ehr/*` and management routes to the private network/API gateway, enforce TLS, add clinic SSO/RBAC at the gateway, redact PHI in infrastructure logs, configure backups/PITR, data retention, consent, and access review according to the clinic's legal jurisdiction.
 

@@ -58,7 +58,7 @@ class AvailabilityQuery(BaseModel):
     to_time: datetime
     limit: int = Field(default=10, ge=1, le=50)
 
-    @field_validator("to_time")
+    @field_validator("from_time", "to_time")
     @classmethod
     def require_timezone(cls, value: datetime) -> datetime:
         if value.tzinfo is None:
@@ -130,5 +130,5 @@ class RetellWebhook(BaseModel):
 
 class RetellFunctionRequest(BaseModel):
     name: str
-    call: dict[str, Any]
+    call: dict[str, Any] = Field(default_factory=dict)
     args: dict[str, Any] = Field(default_factory=dict)

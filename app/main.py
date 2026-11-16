@@ -1,3 +1,6 @@
+import asyncio
+import contextlib
+import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -14,9 +17,32 @@ settings = get_settings()
 configure_logging(settings.log_level)
 
 
+logger = logging.getLogger(__name__)
+SLOT_TOP_UP_INTERVAL_SECONDS = 6 * 60 * 60
+
+
+async def keep_slots_topped_up() -> None:
+    """Boot-time seeding covers 45 days; this keeps that horizon rolling on long-lived servers."""
+    from scripts.seed import top_up_slots
+    from app.db.session import SessionFactory
+    while True:
+        await asyncio.sleep(SLOT_TOP_UP_INTERVAL_SECONDS)
+        try:
+            async with SessionFactory() as session, session.begin():
+                added = await top_up_slots(session)
+            logger.info("slots_topped_up", extra={"added": added})
+        except Exception:  # another replica may have inserted the same slots first; retry next cycle
+            logger.exception("slot_top_up_failed")
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    task = asyncio.create_task(keep_slots_topped_up()) if settings.environment != "test" else None
     yield
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 app = FastAPI(title="Arogya Clinic Voice Receptionist", version="1.0.0", lifespan=lifespan)

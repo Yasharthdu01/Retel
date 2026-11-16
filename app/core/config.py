@@ -1,3 +1,4 @@
+import os
 from functools import lru_cache
 
 from pydantic import Field, field_validator
@@ -16,7 +17,9 @@ class Settings(BaseSettings):
     public_base_url: str = "http://localhost:8000"
     clinic_timezone: str = "Asia/Kolkata"
     booking_buffer_minutes: int = Field(default=15, ge=0, le=240)
-    pms_base_url: str = "http://localhost:8000"
+    # Empty means "the mock EHR inside this same server", on whatever port the server listens on.
+    # Railway injects $PORT, so a hard-coded localhost:8000 silently breaks every booking there.
+    pms_base_url: str = ""
     pms_failure_rate: float = Field(default=0, ge=0, le=1)
     log_level: str = "INFO"
 
@@ -26,6 +29,10 @@ class Settings(BaseSettings):
         if not value.startswith(("postgresql+asyncpg://", "sqlite+aiosqlite://")):
             raise ValueError("DATABASE_URL must use asyncpg or aiosqlite")
         return value
+
+    @property
+    def pms_url(self) -> str:
+        return self.pms_base_url.rstrip("/") or f"http://127.0.0.1:{os.environ.get('PORT', '8000')}"
 
 
 @lru_cache

@@ -2,6 +2,7 @@ import os
 
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["RETELL_WEBHOOK_SECRET"] = "test-secret-key"
+os.environ["ENVIRONMENT"] = "test"
 
 import pytest_asyncio
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
