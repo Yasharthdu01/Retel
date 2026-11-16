@@ -99,7 +99,7 @@ uvicorn app.main:app --reload
 
 | Variable | Required | Purpose |
 |---|---:|---|
-| `DATABASE_URL` | yes | Async SQLAlchemy URL; Neon must use `postgresql+asyncpg://` and TLS parameters as supplied by Neon |
+| `DATABASE_URL` | yes | PostgreSQL URL. Paste Neon or Railway strings unchanged; `postgres://`, `sslmode`, `channel_binding` and Neon `-pooler` hosts are converted for asyncpg automatically |
 | `RETELL_WEBHOOK_SECRET` | yes | Retell designated webhook key used for timestamped HMAC verification |
 | `RETELL_API_KEY` | deployment | Retell management API credential; never expose to callers |
 | `OPENAI_API_KEY` | deployment | OpenAI credential when the Retell LLM is connected to the project account |
