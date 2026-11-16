@@ -1,0 +1,20 @@
+# Render Blueprint: New > Blueprint > pick this repo. Render asks for the two secret values below.
+services:
+  - type: web
+    name: retel-clinic
+    runtime: docker
+    plan: free            # sleeps after 15 min idle; ping /api/v1/health every 10 min to keep it awake
+    region: singapore
+    branch: main
+    autoDeploy: true
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: DATABASE_URL          # Neon connection string, pasted unchanged
+        sync: false
+      - key: RETELL_WEBHOOK_SECRET # Retell API key with the webhook badge
+        sync: false
+      - key: ENVIRONMENT
+        value: production
+      - key: CLINIC_TIMEZONE
+        value: Asia/Kolkata
+      # PUBLIC_BASE_URL defaults to RENDER_EXTERNAL_URL; PMS_BASE_URL empty uses the built-in mock EHR.

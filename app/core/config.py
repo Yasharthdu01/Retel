@@ -46,7 +46,9 @@ class Settings(BaseSettings):
     openai_model: str = "gpt-4.1"
     retell_api_key: str = ""
     retell_webhook_secret: str = Field(default="change-me", min_length=8)
-    public_base_url: str = "http://localhost:8000"
+    # Render sets RENDER_EXTERNAL_URL to the service's public https address, so it needs no manual value.
+    public_base_url: str = Field(
+        default_factory=lambda: os.environ.get("RENDER_EXTERNAL_URL", "http://localhost:8000"))
     clinic_timezone: str = "Asia/Kolkata"
     booking_buffer_minutes: int = Field(default=15, ge=0, le=240)
     # Empty means "the mock EHR inside this same server", on whatever port the server listens on.

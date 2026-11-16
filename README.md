@@ -223,6 +223,12 @@ The critical confirmation path is one database lock/query plus one PMS request. 
 5. Configure Retell (see **Retell setup**) and make web test calls in English, Hindi and Hinglish.
 6. Only then attach a phone number. For a real clinic, point `PMS_BASE_URL` at the clinic's PMS adapter.
 
+### Render (free)
+
+1. In Render choose **New > Blueprint**, pick this repository; `render.yaml` sets up a free Docker web service in Singapore with the health check.
+2. Render asks for `DATABASE_URL` (the Neon string, pasted unchanged) and `RETELL_WEBHOOK_SECRET`. `PUBLIC_BASE_URL` is taken from Render's own `RENDER_EXTERNAL_URL`.
+3. The free plan sleeps after 15 idle minutes and takes about a minute to wake. Point a free uptime monitor at `https://<service>.onrender.com/api/v1/health` every 10 minutes to keep it awake for calls.
+
 Slots are generated for 45 days ahead at every boot and topped up every six hours while the server runs, so the calendar does not run dry.
 
 Use one migration job during multi-replica rollout rather than allowing every replica to migrate concurrently. Restrict `/ehr/*` and management routes to the private network/API gateway, enforce TLS, add clinic SSO/RBAC at the gateway, redact PHI in infrastructure logs, configure backups/PITR, data retention, consent, and access review according to the clinic's legal jurisdiction.
